@@ -82,7 +82,7 @@ export default function MultiPartyCall() {
     for (const peerId of peerIds) {
       if (peerId === myId) continue; // skip self
       if (!peers[peerId]) {
-        await createPeerConnection(peerId, true);
+        await createPeerConnection(peerId, true); // offerer
       }
     }
 
@@ -100,77 +100,112 @@ export default function MultiPartyCall() {
     }
   };
 
+  // NOTE: returns the created RTCPeerConnection synchronously
   const createPeerConnection = async (peerId, isOfferer) => {
-    if (!localStream.current || !isWsOpenRef.current) return;
+    if (!localStream.current || !isWsOpenRef.current) return null;
 
     const pc = new RTCPeerConnection({
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
     });
 
+    // add local tracks
     localStream.current.getTracks().forEach((track) => {
       pc.addTrack(track, localStream.current);
     });
 
     pc.ontrack = (event) => {
+      console.log("ontrack from", peerId, event.streams);
       setPeerStreams((prev) => ({ ...prev, [peerId]: event.streams[0] }));
     };
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        ws.current.send(
-          JSON.stringify({
-            type: "ice-candidate",
-            to: peerId,
-            from: ws.current.id,
-            data: event.candidate,
-          })
-        );
+        if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+          ws.current.send(
+            JSON.stringify({
+              type: "ice-candidate",
+              to: peerId,
+              from: ws.current.id,
+              data: event.candidate,
+            })
+          );
+        } else {
+          console.warn("WebSocket not open, cannot send ICE candidate");
+        }
       }
     };
+
+    // keep state for UI but do not rely on it synchronously
+    setPeers((prev) => ({ ...prev, [peerId]: { pc } }));
 
     if (isOfferer) {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      ws.current.send(
-        JSON.stringify({
-          type: "offer",
-          to: peerId,
-          from: ws.current.id,
-          data: offer,
-        })
-      );
+      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+        ws.current.send(
+          JSON.stringify({
+            type: "offer",
+            to: peerId,
+            from: ws.current.id,
+            data: offer,
+          })
+        );
+      } else {
+        console.warn("WebSocket not open, cannot send offer");
+      }
     }
 
-    setPeers((prev) => ({ ...prev, [peerId]: { pc } }));
+    return pc;
   };
 
   const handleOffer = async ({ from, data }) => {
-    await createPeerConnection(from, false);
-    const pc = peers[from]?.pc;
-    if (!pc) return;
+    // use returned pc immediately (avoids race with setPeers)
+    const pc = await createPeerConnection(from, false);
+    if (!pc) {
+      console.error("Failed to create peer connection for offer from", from);
+      return;
+    }
 
-    await pc.setRemoteDescription(new RTCSessionDescription(data));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    ws.current.send(
-      JSON.stringify({
-        type: "answer",
-        to: from,
-        from: ws.current.id,
-        data: answer,
-      })
-    );
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(data));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+        ws.current.send(
+          JSON.stringify({
+            type: "answer",
+            to: from,
+            from: ws.current.id,
+            data: answer,
+          })
+        );
+      } else {
+        console.warn("WebSocket not open, cannot send answer");
+      }
+    } catch (err) {
+      console.error("Error handling offer", err);
+    }
   };
 
   const handleAnswer = async ({ from, data }) => {
     const pc = peers[from]?.pc;
-    if (!pc) return;
-    await pc.setRemoteDescription(new RTCSessionDescription(data));
+    if (!pc) {
+      console.warn("No pc found for answer from", from);
+      return;
+    }
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(data));
+    } catch (e) {
+      console.error("Error setting remote description (answer)", e);
+    }
   };
 
   const handleIceCandidate = async ({ from, data }) => {
     const pc = peers[from]?.pc;
-    if (!pc) return;
+    if (!pc) {
+      console.warn("No pc found for ice-candidate from", from);
+      return;
+    }
     try {
       await pc.addIceCandidate(new RTCIceCandidate(data));
     } catch (e) {
