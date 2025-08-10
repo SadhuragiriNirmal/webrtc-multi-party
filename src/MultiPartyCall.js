@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 
-const SIGNALING_SERVER_URL = "wss://2c6791b11099.ngrok-free.app/signaling";
+const SIGNALING_SERVER_URL = "wss://72c7475685dd.ngrok-free.app/signaling";
 const ROOM_NAME = "testroom";
 
 export default function MultiPartyCall() {
