@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/webrtc-multi-party/static/css/main.e6c13ad2.css",
+    "main.js": "/webrtc-multi-party/static/js/main.e152237f.js",
+    "static/js/453.79ba92b2.chunk.js": "/webrtc-multi-party/static/js/453.79ba92b2.chunk.js",
+    "index.html": "/webrtc-multi-party/index.html",
+    "main.e6c13ad2.css.map": "/webrtc-multi-party/static/css/main.e6c13ad2.css.map",
+    "main.e152237f.js.map": "/webrtc-multi-party/static/js/main.e152237f.js.map",
+    "453.79ba92b2.chunk.js.map": "/webrtc-multi-party/static/js/453.79ba92b2.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.e6c13ad2.css",
+    "static/js/main.e152237f.js"
+  ]
+}
