@@ -10,9 +10,8 @@ export default function MultiPartyCall() {
   const localStream = useRef(null);
   const [peerStreams, setPeerStreams] = useState({});
 
-  // Use ref to track WebSocket open state synchronously
   const isWsOpenRef = useRef(false);
-  const [isWsOpen, setIsWsOpen] = useState(false); // for UI or debugging if needed
+  const [isWsOpen, setIsWsOpen] = useState(false);
 
   useEffect(() => {
     let wsConnection;
@@ -32,21 +31,27 @@ export default function MultiPartyCall() {
           console.log("WebSocket connected");
           setIsWsOpen(true);
           isWsOpenRef.current = true;
-          wsConnection.send(JSON.stringify({ type: "join", room: ROOM_NAME }));
         };
 
         wsConnection.onmessage = async (message) => {
           const data = JSON.parse(message.data);
-          if (data.type === "peers") {
+
+          if (data.type === "id") {
+            ws.current.id = data.id;
+            console.log("Assigned ID:", data.id);
+            wsConnection.send(JSON.stringify({ type: "join", room: ROOM_NAME }));
+
+          } else if (data.type === "peers") {
             if (isWsOpenRef.current) {
               await handlePeersUpdate(data.peers);
-            } else {
-              console.warn("WebSocket not open yet, skipping peers update");
             }
+
           } else if (data.type === "offer") {
             await handleOffer(data);
+
           } else if (data.type === "answer") {
             await handleAnswer(data);
+
           } else if (data.type === "ice-candidate") {
             await handleIceCandidate(data);
           }
@@ -71,13 +76,11 @@ export default function MultiPartyCall() {
   }, []);
 
   const handlePeersUpdate = async (peerIds) => {
-    if (!localStream.current || !isWsOpenRef.current) {
-      console.log("Local stream or WS not ready, skipping peer creation.");
-      return;
-    }
+    if (!localStream.current || !isWsOpenRef.current) return;
+    const myId = ws.current.id;
 
     for (const peerId of peerIds) {
-      if (peerId === ws.current.id) continue;
+      if (peerId === myId) continue; // skip self
       if (!peers[peerId]) {
         await createPeerConnection(peerId, true);
       }
@@ -98,10 +101,7 @@ export default function MultiPartyCall() {
   };
 
   const createPeerConnection = async (peerId, isOfferer) => {
-    if (!localStream.current || !isWsOpenRef.current) {
-      console.warn("Local stream or WS not ready for createPeerConnection");
-      return;
-    }
+    if (!localStream.current || !isWsOpenRef.current) return;
 
     const pc = new RTCPeerConnection({
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -117,36 +117,28 @@ export default function MultiPartyCall() {
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-          ws.current.send(
-            JSON.stringify({
-              type: "ice-candidate",
-              to: peerId,
-              from: ws.current.id,
-              data: event.candidate,
-            })
-          );
-        } else {
-          console.warn("WebSocket not open, cannot send ICE candidate");
-        }
+        ws.current.send(
+          JSON.stringify({
+            type: "ice-candidate",
+            to: peerId,
+            from: ws.current.id,
+            data: event.candidate,
+          })
+        );
       }
     };
 
     if (isOfferer) {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-        ws.current.send(
-          JSON.stringify({
-            type: "offer",
-            to: peerId,
-            from: ws.current.id,
-            data: offer,
-          })
-        );
-      } else {
-        console.warn("WebSocket not open, cannot send offer");
-      }
+      ws.current.send(
+        JSON.stringify({
+          type: "offer",
+          to: peerId,
+          from: ws.current.id,
+          data: offer,
+        })
+      );
     }
 
     setPeers((prev) => ({ ...prev, [peerId]: { pc } }));
@@ -160,18 +152,14 @@ export default function MultiPartyCall() {
     await pc.setRemoteDescription(new RTCSessionDescription(data));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-      ws.current.send(
-        JSON.stringify({
-          type: "answer",
-          to: from,
-          from: ws.current.id,
-          data: answer,
-        })
-      );
-    } else {
-      console.warn("WebSocket not open, cannot send answer");
-    }
+    ws.current.send(
+      JSON.stringify({
+        type: "answer",
+        to: from,
+        from: ws.current.id,
+        data: answer,
+      })
+    );
   };
 
   const handleAnswer = async ({ from, data }) => {
